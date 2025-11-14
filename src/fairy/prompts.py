@@ -1,47 +1,48 @@
-"""Prompt templates for the deep research system.
+"""
+深度研究系统的Prompt模板。
 
-This module contains all prompt templates used across the research workflow components,
-including user clarification, research brief generation, and report synthesis.
+本模块包含整个研究工作流组件中使用的所有提示模板，包括用户澄清、研究简报生成和报告合成。
 """
 
 clarify_with_user_instructions="""
-These are the messages that have been exchanged so far from the user asking for the report:
+这些是迄今为止从要求报告的用户那里交换的消息：
+
 <Messages>
 {messages}
 </Messages>
 
-Today's date is {date}.
+今天的日期是 {date}。
 
-Assess whether you need to ask a clarifying question, or if the user has already provided enough information for you to start research.
-IMPORTANT: If you can see in the messages history that you have already asked a clarifying question, you almost always do not need to ask another one. Only ask another question if ABSOLUTELY NECESSARY.
+评估你是否需要提出澄清问题，或者用户是否已经提供了足够的信息让你开始研究。
+重要提示：如果你能在消息历史中看到你已经提出了澄清问题，你不需要再提出另一个问题。只有绝对必要时才提出另一个问题。
 
-If there are acronyms, abbreviations, or unknown terms, ask the user to clarify.
-If you need to ask a question, follow these guidelines:
-- Be concise while gathering all necessary information
-- Make sure to gather all the information needed to carry out the research task in a concise, well-structured manner.
-- Use bullet points or numbered lists if appropriate for clarity. Make sure that this uses markdown formatting and will be rendered correctly if the string output is passed to a markdown renderer.
-- Don't ask for unnecessary information, or information that the user has already provided. If you can see that the user has already provided the information, do not ask for it again.
+如果有首字母缩写词、缩写或未知术语，请让用户澄清。
+如果您需要提问，请遵循以下步骤：
+- 简洁明了地收集所有必要信息
+- 确保以简洁、结构良好的方式收集完成研究任务所需的所有信息。
+- 如有必要，使用项目符号或编号列表以提高清晰度。请确保使用了 Markdown 格式，并且如果将字符串输出传递给 Markdown 渲染器，能够正确呈现。
+- 不要询问不必要的信息，或者用户已经提供的信息。如果您看到用户已经提供了信息，请不要再次询问。
 
-Respond in valid JSON format with these exact keys:
+使用这些精确的键以有效的JSON格式响应:
 "need_clarification": boolean,
-"question": "<question to ask the user to clarify the report scope>",
-"verification": "<verification message that we will start research>"
+"question": "<要求用户澄清报告范围的问题>",
+"verification": "<我们将开始研究的已验证信息>"
 
-If you need to ask a clarifying question, return:
+如果你需要问一个澄清性的问题, 返回如下:
 "need_clarification": true,
-"question": "<your clarifying question>",
+"question": "<你的澄清问题>",
 "verification": ""
 
-If you do not need to ask a clarifying question, return:
+如果你不需要问一个澄清性的问题，返回如下:
 "need_clarification": false,
 "question": "",
-"verification": "<acknowledgement message that you will now start research based on the provided information>"
+"verification": "<你将开始研究所基于的确切信息>"
 
-For the verification message when no clarification is needed:
-- Acknowledge that you have sufficient information to proceed
-- Briefly summarize the key aspects of what you understand from their request
-- Confirm that you will now begin the research process
-- Keep the message concise and professional
+对于不需要澄清的验证信息：
+- 确认你有足够的信息可以继续
+- 简要总结你从他们的请求中了解到的关键方面
+- 确认你现在将开始研究过程
+- 保持信息的简洁和专业
 """
 
 transform_messages_into_research_topic_prompt = """You will be given a set of messages that have been exchanged so far between yourself and the user. 
