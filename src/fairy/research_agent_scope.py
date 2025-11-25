@@ -12,7 +12,6 @@ whether sufficient context exists to proceed with research.
 from datetime import datetime
 from typing_extensions import Literal
 
-from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage, AIMessage, get_buffer_string
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import Command
@@ -28,21 +27,10 @@ def get_today_str() -> str:
 
 # ===== CONFIGURATION =====
 
+from fairy.init_model import init_model
+
 # Initialize model
-import os
-from dotenv import load_dotenv
-load_dotenv()
-
-MODEL_BASE_URL = os.getenv("MODEL_BASE_URL")
-MODEL_API_KEY = os.getenv("MODEL_API_KEY")
-
-model = init_chat_model(
-        model="gpt-4.1",
-        model_provider="openai",
-        base_url=MODEL_BASE_URL,
-        api_key=MODEL_API_KEY,
-        temperature=0.0,
-    )
+model = init_model(model="gpt-4.1")
 
 # ===== WORKFLOW NODES =====
 

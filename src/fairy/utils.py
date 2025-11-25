@@ -9,7 +9,6 @@ from pathlib import Path
 from datetime import datetime
 from typing_extensions import Annotated, List, Literal
 
-from langchain.chat_models import init_chat_model
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
@@ -39,19 +38,10 @@ def get_current_dir() -> Path:
         return Path.cwd()
 
 # ===== CONFIGURATION =====
-import os
-from dotenv import load_dotenv
-load_dotenv()
 
-MODEL_BASE_URL = os.getenv("MODEL_BASE_URL")
-MODEL_API_KEY = os.getenv("MODEL_API_KEY")
+from fairy.init_model import init_model
 
-summarization_model = init_chat_model(
-        model="gpt-4.1-mini",
-        model_provider="openai",
-        base_url=MODEL_BASE_URL,
-        api_key=MODEL_API_KEY,
-    )
+summarization_model = init_model(model="gpt-4.1-mini")
 tavily_client = TavilyClient()
 
 # ===== SEARCH FUNCTIONS =====
