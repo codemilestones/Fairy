@@ -41,7 +41,8 @@ def llm_call(state: ResearcherState):
     return {
         "researcher_messages": [
             model_with_tools.invoke(
-                [SystemMessage(content=research_agent_prompt)] + state["researcher_messages"]
+                [SystemMessage(content=research_agent_prompt.format(date=get_today_str()))]
+                + state["researcher_messages"]
             )
         ]
     }
@@ -79,7 +80,12 @@ def compress_research(state: ResearcherState) -> dict:
     """
 
     system_message = compress_research_system_prompt.format(date=get_today_str())
-    messages = [SystemMessage(content=system_message)] + state.get("researcher_messages", []) + [HumanMessage(content=compress_research_human_message)]
+    research_topic = state.get("research_topic", "")
+    messages = (
+        [SystemMessage(content=system_message)]
+        + state.get("researcher_messages", [])
+        + [HumanMessage(content=compress_research_human_message.format(research_topic=research_topic))]
+    )
     response = compress_model.invoke(messages)
 
     # 从工具消息和 AI 消息中提取原始笔记
