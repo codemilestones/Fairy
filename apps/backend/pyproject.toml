@@ -8,11 +8,17 @@ dependencies = [
   "uvicorn[standard]>=0.30.0",
   "pydantic>=2.0.0",
   "python-dotenv>=1.0.0",
+  # Monorepo root package for the research pipeline + its dependencies.
+  "fairy",
 ]
 
 [tool.uv]
 dev-dependencies = [
   "ruff>=0.6.1",
 ]
+
+[tool.uv.sources]
+# Path is relative to apps/backend -> repo root
+fairy = { path = "../.." }
 
 
