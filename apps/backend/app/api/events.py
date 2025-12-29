@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import json
 import asyncio
+import logging
 from typing import AsyncIterator, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from app.runtime import get_pubsub, get_store
+
+
+logger = logging.getLogger(__name__)
 
 
 router = APIRouter(prefix="/api", tags=["events"])
@@ -37,13 +41,23 @@ async def session_events(request: Request, session_id: str, after_id: int = 0):
     try:
         store.get_session(session_id)
     except KeyError as e:
+        logger.warning("sse: session not found session_id=%s", session_id)
         raise HTTPException(status_code=404, detail=str(e)) from e
+
+    logger.info(
+        "sse connect session_id=%s after_id=%s client=%s",
+        session_id,
+        after_id,
+        request.client.host if request.client else None,
+    )
 
     async def gen() -> AsyncIterator[bytes]:
         # replay
         replay = store.list_events(session_id, after_id=after_id, limit=500)
+        logger.debug("sse replay session_id=%s count=%d after_id=%s", session_id, len(replay), after_id)
         for ev in replay:
             if await request.is_disconnected():
+                logger.info("sse disconnected during replay session_id=%s", session_id)
                 return
             yield _sse(ev.type, {"ts": ev.ts.isoformat(), "payload": ev.payload}, event_id=ev.id).encode(
                 "utf-8"
@@ -55,6 +69,7 @@ async def session_events(request: Request, session_id: str, after_id: int = 0):
             # Periodically wake up to detect disconnect and to keep the connection alive.
             while True:
                 if await request.is_disconnected():
+                    logger.info("sse disconnected session_id=%s", session_id)
                     return
                 try:
                     msg = await asyncio.wait_for(sub.queue.get(), timeout=15.0)
@@ -65,6 +80,7 @@ async def session_events(request: Request, session_id: str, after_id: int = 0):
                 yield _sse(msg["type"], msg["data"], event_id=msg.get("id")).encode("utf-8")
         finally:
             await pubsub.unsubscribe(session_id, sub)
+            logger.debug("sse unsubscribed session_id=%s", session_id)
 
     return StreamingResponse(gen(), media_type="text/event-stream")
 

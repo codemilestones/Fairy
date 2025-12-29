@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
@@ -13,12 +15,20 @@ from app.runtime import get_pubsub, get_store
 from app.storage.sqlite import utc_now
 
 
+logger = logging.getLogger(__name__)
+
+
 def _ensure_repo_root_on_syspath() -> None:
     """Allow `import fairy` when running backend without installing the root package."""
     repo_root = Path(__file__).resolve().parents[4]
     src_root = repo_root / "src"
     if str(src_root) not in sys.path:
         sys.path.insert(0, str(src_root))
+
+
+def _preview(text: str, n: int = 120) -> str:
+    t = (text or "").replace("\n", " ").strip()
+    return t if len(t) <= n else t[: n - 1] + "…"
 
 
 class IntentDecision(BaseModel):
@@ -36,16 +46,41 @@ class Orchestrator:
 
         async def emit(type: str, payload: dict[str, Any]) -> None:
             ev = store.append_event(session_id, type=type, payload=payload)
+            logger.debug(
+                "emit event session_id=%s event_id=%s type=%s payload_keys=%s",
+                session_id,
+                ev.id,
+                type,
+                list(payload.keys()),
+            )
             # publish to in-memory SSE subscribers (best-effort)
             await pubsub.publish(
                 session_id,
                 {"id": ev.id, "type": ev.type, "data": {"ts": ev.ts.isoformat(), "payload": ev.payload}},
             )
 
+        overall_start = time.perf_counter()
         try:
             session = store.get_session(session_id)
         except KeyError:
+            logger.warning("pipeline abort: session not found session_id=%s", session_id)
             return
+
+        # Find last user message for debugging (preview only)
+        last_user = ""
+        if session.messages:
+            for m in reversed(session.messages):
+                if m.get("role") == "user":
+                    last_user = str(m.get("content", ""))
+                    break
+
+        logger.info(
+            "pipeline start session_id=%s status=%s messages=%d last_user_preview=%s",
+            session_id,
+            session.status,
+            len(session.messages),
+            _preview(last_user),
+        )
 
         # Build LC messages for scope graph from stored chat
         lc_messages = []
@@ -61,6 +96,7 @@ class Orchestrator:
         _ensure_repo_root_on_syspath()
         from fairy.init_model import init_model  # noqa: E402
 
+        t_intent = time.perf_counter()
         intent_model = init_model(model="gpt-4.1-mini")
         structured = intent_model.with_structured_output(IntentDecision)
         intent_prompt = (
@@ -71,6 +107,13 @@ class Orchestrator:
             f"用户需求：{session.messages[-1]['content'] if session.messages else ''}"
         )
         intent = await anyio.to_thread.run_sync(lambda: structured.invoke([HumanMessage(content=intent_prompt)]))
+        logger.info(
+            "intent done session_id=%s is_research=%s label=%s duration_ms=%.1f",
+            session_id,
+            intent.is_research,
+            intent.intent_label,
+            (time.perf_counter() - t_intent) * 1000.0,
+        )
         session.intent = intent.model_dump()
         session.updated_at = utc_now()
         store.save_session(session)
@@ -81,13 +124,25 @@ class Orchestrator:
             session.status = "completed"
             session.updated_at = utc_now()
             store.save_session(session)
+            logger.info(
+                "pipeline stop (non-research) session_id=%s total_duration_ms=%.1f",
+                session_id,
+                (time.perf_counter() - overall_start) * 1000.0,
+            )
             return
 
         # === Scope (clarification + brief) ===
         from fairy.research_agent_scope import scope_research  # noqa: E402
 
+        t_scope = time.perf_counter()
         scope_out: dict[str, Any] = await anyio.to_thread.run_sync(
             lambda: scope_research.invoke({"messages": lc_messages})
+        )
+        logger.info(
+            "scope done session_id=%s has_brief=%s duration_ms=%.1f",
+            session_id,
+            bool(scope_out.get("research_brief")),
+            (time.perf_counter() - t_scope) * 1000.0,
         )
 
         # If graph ended with a clarification question, it will be the last AI message.
@@ -111,6 +166,12 @@ class Orchestrator:
             session.updated_at = utc_now()
             store.save_session(session)
             await emit("scope_clarification_needed", {"question": clarification_question})
+            logger.info(
+                "pipeline needs_clarification session_id=%s question_preview=%s total_duration_ms=%.1f",
+                session_id,
+                _preview(clarification_question),
+                (time.perf_counter() - overall_start) * 1000.0,
+            )
             return
 
         research_brief = scope_out.get("research_brief")
@@ -120,6 +181,12 @@ class Orchestrator:
             session.updated_at = utc_now()
             store.save_session(session)
             await emit("research_brief_ready", {"research_brief": session.research_brief})
+            logger.info(
+                "research_brief ready session_id=%s brief_chars=%d preview=%s",
+                session_id,
+                len(session.research_brief or ""),
+                _preview(session.research_brief or ""),
+            )
         else:
             raise RuntimeError("scope did not produce research_brief")
 
@@ -127,6 +194,7 @@ class Orchestrator:
         from fairy.research_agent import researcher_agent  # noqa: E402
 
         await emit("research_progress", {"stage": "start"})
+        t_research = time.perf_counter()
         researcher_out: dict[str, Any] = await anyio.to_thread.run_sync(
             lambda: researcher_agent.invoke(
                 {
@@ -138,16 +206,29 @@ class Orchestrator:
                 }
             )
         )
+        logger.info(
+            "research done session_id=%s duration_ms=%.1f out_keys=%s",
+            session_id,
+            (time.perf_counter() - t_research) * 1000.0,
+            list(researcher_out.keys()),
+        )
         session.compressed_research = str(researcher_out.get("compressed_research", ""))
         session.raw_notes = list(researcher_out.get("raw_notes") or [])
         session.updated_at = utc_now()
         store.save_session(session)
         await emit("research_complete", {"compressed_research": session.compressed_research})
+        logger.info(
+            "research artifacts session_id=%s compressed_chars=%d raw_notes=%d",
+            session_id,
+            len(session.compressed_research or ""),
+            len(session.raw_notes or []),
+        )
 
         # === Final report ===
         from fairy.prompts import final_report_generation_prompt  # noqa: E402
         from fairy.utils import get_today_str as fairy_today  # noqa: E402
 
+        t_report = time.perf_counter()
         report_model = init_model(model="gpt-4.1")
         prompt = final_report_generation_prompt.format(
             research_brief=session.research_brief or "",
@@ -160,12 +241,20 @@ class Orchestrator:
         session.updated_at = utc_now()
         store.save_session(session)
         await emit("final_report_ready", {"final_report": session.final_report})
+        logger.info(
+            "final_report ready session_id=%s duration_ms=%.1f report_chars=%d total_duration_ms=%.1f",
+            session_id,
+            (time.perf_counter() - t_report) * 1000.0,
+            len(session.final_report or ""),
+            (time.perf_counter() - overall_start) * 1000.0,
+        )
 
     async def safe_run(self, session_id: str) -> None:
         store = get_store()
         try:
             await self.run(session_id)
         except Exception as e:  # pragma: no cover (demo safety)
+            logger.exception("pipeline error session_id=%s error=%s", session_id, e)
             try:
                 session = store.get_session(session_id)
                 session.status = "error"
