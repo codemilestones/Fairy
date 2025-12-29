@@ -48,6 +48,19 @@ export default function Page() {
     );
   }, [events]);
 
+  const latestResearchProgress = useMemo(() => {
+    // 事件 data 结构：{ ts, payload: {...} }
+    for (let i = events.length - 1; i >= 0; i--) {
+      const ev = events[i];
+      if (ev.type !== "research_progress") continue;
+      const payload = ev?.data?.payload || {};
+      const stage = typeof payload.stage === "string" ? payload.stage : "unknown";
+      const elapsed_s = typeof payload.elapsed_s === "number" ? payload.elapsed_s : undefined;
+      return { stage, elapsed_s };
+    }
+    return null;
+  }, [events]);
+
   const currentStepIndex = useMemo(() => {
     if (report) return 4;
     // 一旦收到 research_progress（start）就应进入“执行研究”阶段展示
@@ -270,6 +283,29 @@ export default function Page() {
             <div style={{ fontWeight: 700, marginBottom: 8 }}>研究简报</div>
             <div style={{ whiteSpace: "pre-wrap", border: "1px solid #eee", borderRadius: 12, padding: 12, background: "#fff" }}>
               {brief}
+            </div>
+          </section>
+        ) : null}
+
+        {hasResearchStarted && !report ? (
+          <section style={{ marginBottom: 16 }}>
+            <div style={{ fontWeight: 700, marginBottom: 8 }}>执行研究</div>
+            <div
+              style={{
+                border: "1px solid #eee",
+                borderRadius: 12,
+                padding: 12,
+                background: "#fff",
+                color: "#444"
+              }}
+            >
+              <div>正在自动执行研究，请稍候…</div>
+              {latestResearchProgress ? (
+                <div style={{ marginTop: 6, fontSize: 12, color: "#666" }}>
+                  stage: {latestResearchProgress.stage}
+                  {typeof latestResearchProgress.elapsed_s === "number" ? ` · 已用时 ${latestResearchProgress.elapsed_s}s` : ""}
+                </div>
+              ) : null}
             </div>
           </section>
         ) : null}

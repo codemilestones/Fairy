@@ -193,19 +193,45 @@ class Orchestrator:
         # === Research ===
         from fairy.research_agent import researcher_agent  # noqa: E402
 
-        await emit("research_progress", {"stage": "start"})
         t_research = time.perf_counter()
-        researcher_out: dict[str, Any] = await anyio.to_thread.run_sync(
-            lambda: researcher_agent.invoke(
-                {
-                    "researcher_messages": [HumanMessage(content=f"{session.research_brief}.")],
-                    "tool_call_iterations": 0,
-                    "research_topic": session.research_brief or "",
-                    "compressed_research": "",
-                    "raw_notes": [],
-                }
+        await emit("research_progress", {"stage": "start", "elapsed_s": 0.0})
+
+        # Research can take a while; emit periodic heartbeat progress so UI doesn't look stuck.
+        done = anyio.Event()
+        researcher_out: dict[str, Any] = {}
+
+        async def _do_research() -> None:
+            nonlocal researcher_out
+            researcher_out = await anyio.to_thread.run_sync(
+                lambda: researcher_agent.invoke(
+                    {
+                        "researcher_messages": [HumanMessage(content=f"{session.research_brief}.")],
+                        "tool_call_iterations": 0,
+                        "research_topic": session.research_brief or "",
+                        "compressed_research": "",
+                        "raw_notes": [],
+                    }
+                )
             )
-        )
+            done.set()
+
+        async def _heartbeat() -> None:
+            # Avoid spamming; 2s is responsive enough for demo.
+            while not done.is_set():
+                await anyio.sleep(2.0)
+                await emit(
+                    "research_progress",
+                    {
+                        "stage": "running",
+                        "elapsed_s": round(time.perf_counter() - t_research, 1),
+                    },
+                )
+
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(_do_research)
+            tg.start_soon(_heartbeat)
+            await done.wait()
+            tg.cancel_scope.cancel()
         logger.info(
             "research done session_id=%s duration_ms=%.1f out_keys=%s",
             session_id,
@@ -216,6 +242,10 @@ class Orchestrator:
         session.raw_notes = list(researcher_out.get("raw_notes") or [])
         session.updated_at = utc_now()
         store.save_session(session)
+        await emit(
+            "research_progress",
+            {"stage": "complete", "elapsed_s": round(time.perf_counter() - t_research, 1)},
+        )
         await emit("research_complete", {"compressed_research": session.compressed_research})
         logger.info(
             "research artifacts session_id=%s compressed_chars=%d raw_notes=%d",
